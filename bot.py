@@ -1535,88 +1535,94 @@ async def playerSettings(interaction : discord.Interaction, setting : app_comman
 @tree.command(name="play", description=lang.slash.play)
 @app_commands.describe(tracks="URL / Title / saved playlist (/playlist); use , for mutiple items")
 async def playSong(interaction : discord.Interaction, tracks : str, shuffle:bool = None):
-    if not config.music:
-        await interaction.response.send_message("This module is not available", ephemeral=True)
-        return
-    
-    guildID = int(interaction.guild.id)
-    await interaction.response.defer(ephemeral=True)
+    try: 
+        musicBridge.add_song(interaction, tracks, position='end', shuffle=shuffle)
+        play_success = True
+    except:
+        play_success = False
+    if not play_success:
+        if not config.music:
+            await interaction.response.send_message("This module is not available", ephemeral=True)
+            return
+        
+        guildID = int(interaction.guild.id)
+        await interaction.response.defer(ephemeral=True)
 
-    if interaction.channel.id in settings[guildID]['musicbot']['disabled_channels']:
-        await interaction.followup.send(lang.module_not_enabled, ephemeral=True)
-        return
-    
-    # Load useful variables
-    urlsync = settings[guildID]['musicbot']['urlsync']
-    if shuffle == None: shuffle = settings[guildID]['musicbot']["player_shuffle"]
-    # else -> shuffle = shuffle
-    precision = settings[guildID]['musicbot']["timeline_precision"]
-    playlists = settings[guildID]['musicbot']['saved_playlists']
+        if interaction.channel.id in settings[guildID]['musicbot']['disabled_channels']:
+            await interaction.followup.send(lang.module_not_enabled, ephemeral=True)
+            return
+        
+        # Load useful variables
+        urlsync = settings[guildID]['musicbot']['urlsync']
+        if shuffle == None: shuffle = settings[guildID]['musicbot']["player_shuffle"]
+        # else -> shuffle = shuffle
+        precision = settings[guildID]['musicbot']["timeline_precision"]
+        playlists = settings[guildID]['musicbot']['saved_playlists']
 
-    try:
-        userVC = bot.get_channel(interaction.user.voice.channel.id)
-    except AttributeError:
-        await interaction.followup.send(lang.music.play_user_not_in_vc, ephemeral=True)
-        return
+        try:
+            userVC = bot.get_channel(interaction.user.voice.channel.id)
+        except AttributeError:
+            await interaction.followup.send(lang.music.play_user_not_in_vc, ephemeral=True)
+            return
 
-    voice_client : discord.VoiceClient = get(bot.voice_clients, guild=interaction.guild)
-    if voice_client != None and voice_client.is_connected():
-        if userVC!=None and voice_client.channel.id == userVC.id:
-            await interaction.followup.send(lang.music.play_wrong_command, ephemeral=True)
-        else:
-            await interaction.followup.send(lang.music.play_already_connected, ephemeral=True)
-        return
+        voice_client : discord.VoiceClient = get(bot.voice_clients, guild=interaction.guild)
+        if voice_client != None and voice_client.is_connected():
+            if userVC!=None and voice_client.channel.id == userVC.id:
+                await interaction.followup.send(lang.music.play_wrong_command, ephemeral=True)
+            else:
+                await interaction.followup.send(lang.music.play_already_connected, ephemeral=True)
+            return
 
-    # Merge music/suggestions/guildID[overwritten tracks] with guidsData[urlsync]
-    try:
-        if not os.path.exists("music/suggestions"):
-            os.mkdir('music/suggestions')
-        with open(f'music/suggestions/{str(interaction.guild.id)}.json', 'r') as f:
-            new_urlsync = json.load(f)
-        os.remove(f'music/suggestions/{str(interaction.guild.id)}.json')
+        # Merge music/suggestions/guildID[overwritten tracks] with guidsData[urlsync]
+        try:
+            if not os.path.exists("music/suggestions"):
+                os.mkdir('music/suggestions')
+            with open(f'music/suggestions/{str(interaction.guild.id)}.json', 'r') as f:
+                new_urlsync = json.load(f)
+            os.remove(f'music/suggestions/{str(interaction.guild.id)}.json')
 
-        tmp_merge = {}
-        for d in urlsync + new_urlsync:
-            tmp_merge.setdefault(d['youtube_url'], {}).update(d)
-        urlsync = [tmp_merge[d] for d in tmp_merge]
+            tmp_merge = {}
+            for d in urlsync + new_urlsync:
+                tmp_merge.setdefault(d['youtube_url'], {}).update(d)
+            urlsync = [tmp_merge[d] for d in tmp_merge]
 
-        settings[guildID]['musicbot']['urlsync'] = urlsync
-        dumpSettings()
+            settings[guildID]['musicbot']['urlsync'] = urlsync
+            dumpSettings()
 
-        mPrint('DEBUG', "synced urlsync suggestions with urlsync")
+            mPrint('DEBUG', "synced urlsync suggestions with urlsync")
 
-    except json.decoder.JSONDecodeError:
-        #File is probably empty, still delete it in case it's corrupted
-        os.remove(f'music/suggestions/{str(interaction.guild.id)}.json')
-    except FileNotFoundError:
-        pass #File does not exist
-    except Exception:
-        mPrint('WARN', traceback.format_exc())
+        except json.decoder.JSONDecodeError:
+            #File is probably empty, still delete it in case it's corrupted
+            os.remove(f'music/suggestions/{str(interaction.guild.id)}.json')
+        except FileNotFoundError:
+            pass #File does not exist
+        except Exception:
+            mPrint('WARN', traceback.format_exc())
 
-    # Get the links
-    playlistURLs = musicBridge.parseUserInput(tracks, playlists)
-    if playlistURLs == None:
-        await interaction.followup.send(lang.music.input_error)
-        return -1
-    elif playlistURLs == 404:
-        await interaction.followup.send(lang.music.play_error_404)
-        return -1
-    
-    # Remove musicbot slash commands if they exist (will regenerate them later)
-    cmds = tree.get_commands(guild=interaction.guild)
-    if len(cmds) != 0:
-        tree.clear_commands(guild=interaction.guild)
-        mPrint('DEBUG', f'Syncing musicbot tree for guild')
-        await tree.sync(guild=interaction.guild)
+        # Get the links
+        playlistURLs = musicBridge.parseUserInput(tracks, playlists)
+        if playlistURLs == None:
+            await interaction.followup.send(lang.music.input_error)
+            return -1
+        elif playlistURLs == 404:
+            await interaction.followup.send(lang.music.play_error_404)
+            return -1
+        
+        # Remove musicbot slash commands if they exist (will regenerate them later)
+        cmds = tree.get_commands(guild=interaction.guild)
+        if len(cmds) != 0:
+            tree.clear_commands(guild=interaction.guild)
+            mPrint('DEBUG', f'Syncing musicbot tree for guild')
+            await tree.sync(guild=interaction.guild)
 
-    #Start music module
-    try:
-        mPrint('TEST', f'playing input: {playlistURLs}')
-        await musicBridge.play(playlistURLs, interaction, bot, tree, shuffle, precision, urlsync, playlists)
-        mPrint('TEST', 'musicBridge.play() returned')
-    except Exception:
-        await interaction.followup.send(lang.music.player.generic_error, ephemeral=True)
-        mPrint('ERROR', traceback.format_exc())
+        #Start music module
+        try:
+            mPrint('TEST', f'playing input: {playlistURLs}')
+            await musicBridge.play(playlistURLs, interaction, bot, tree, shuffle, precision, urlsync, playlists)
+            mPrint('TEST', 'musicBridge.play() returned')
+        except Exception:
+            await interaction.followup.send(lang.music.player.generic_error, ephemeral=True)
+            mPrint('ERROR', traceback.format_exc())
 
 # ======== MISC ========= #
 @tree.command(name="module-info", description=lang.slash.module_info)
